@@ -2,8 +2,8 @@
 import sys
 from urllib import request
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QGridLayout
-from PyQt5.QtGui import QCloseEvent, QIcon, QPixmap, QImage, QKeyEvent, QFont
-from PyQt5.QtCore import QCoreApplication, Qt, QTimer
+from PyQt5.QtGui import QPixmap, QImage, QKeyEvent, QFont
+from PyQt5.QtCore import Qt, QTimer
 import cv2
 import numpy as np
 
@@ -11,7 +11,7 @@ import numpy as np
 
 
 class App(QWidget):
-    ip = "192.168.137.103"
+    ip = ""
     def __init__(self):
         super().__init__()
         self.stream = request.urlopen('http://' + App.ip +':81/stream')
@@ -51,22 +51,22 @@ class App(QWidget):
         btn4.resize(60, 30)
         btn4.pressed.connect(self.speed100)
 
-        btn5 = QPushButton('Forward', self)
+        btn5 = QPushButton('Forward(press W)', self)
         btn5.resize(60, 30)
         btn5.pressed.connect(self.forward)
         btn5.released.connect(self.stop)
 
-        btn6 = QPushButton('Backward', self)
+        btn6 = QPushButton('Backward(press S)', self)
         btn6.resize(60, 30)
         btn6.pressed.connect(self.backward)
         btn6.released.connect(self.stop)
 
-        btn7 = QPushButton('Left', self)
+        btn7 = QPushButton('Left(Press A)', self)
         btn7.resize(60, 30)
         btn7.pressed.connect(self.left)
         btn7.released.connect(self.stop)
 
-        btn8 = QPushButton('Right', self)
+        btn8 = QPushButton('Right(Press D)', self)
         btn8.resize(60, 30)
         btn8.pressed.connect(self.right)
         btn8.released.connect(self.stop)
@@ -174,10 +174,10 @@ class App(QWidget):
                 if self.autodrive :
                     # img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                     height, width, _ = img.shape
-                    img = img[height // 3:, :]
+                    img2 = img[height // 2:, :]
                     lower_bound = np.array([0, 0, 0])
                     upper_bound = np.array([255, 255, 80])
-                    mask = cv2.inRange(img, lower_bound, upper_bound)
+                    mask = cv2.inRange(img2, lower_bound, upper_bound)
                     M = cv2.moments(mask)
                     if M["m00"] != 0:
                         cX = int(M["m10"] / M["m00"])
@@ -185,8 +185,9 @@ class App(QWidget):
                     else:
                         cX, cY = 0, 0
                     center_offset = width // 2 - cX
-                    cv2.circle(img, (cX, cY), 10, (0, 255, 0), -1)
-                    cv2.imshow("AI CAR Streaming", img)
+                    cv2.circle(img2, (cX, cY + height // 3), 10, (0, 255, 0), -1)
+                    # cv2.imshow("title", mask) 트랙킹 확인
+
                     if center_offset > 15:
                         self.right()
                     elif center_offset < -15:
@@ -228,7 +229,7 @@ class App(QWidget):
 
     def keyPressEvent(self, event:QKeyEvent) :
         key = event.key()
-        if event.isAutoRepeasawt() :
+        if event.isAutoRepeat() :
             return
     
         if key == Qt.Key_W :
@@ -257,6 +258,3 @@ if __name__ == '__main__':
    view = App()
    view.show()
    sys.exit(app.exec_())
-
-
-
