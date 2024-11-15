@@ -1,17 +1,17 @@
 
-import sys
+import sys, torch, random, threading, time, os
 from urllib import request
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QVBoxLayout, QGridLayout
 from PyQt5.QtGui import QPixmap, QImage, QKeyEvent, QFont
 from PyQt5.QtCore import Qt, QTimer
 import cv2
 import numpy as np
-
-
-
+import pathlib
+temp = pathlib.PosixPath
+pathlib.PosixPath = pathlib.WindowsPath
 
 class App(QWidget):
-    ip = ""
+    ip = "192.168.137.6"
     def __init__(self):
         super().__init__()
         self.stream = request.urlopen('http://' + App.ip +':81/stream')
@@ -22,6 +22,7 @@ class App(QWidget):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.face_detection_enabled = False
         self.autodrive = False
+        self.model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt')
 
     def initUI(self):  
         self.label = QLabel(self)
@@ -98,15 +99,15 @@ class App(QWidget):
         grid.addWidget(btn2, 1, 0)
         grid.addWidget(btn3, 2, 0)
         grid.addWidget(btn4, 3, 0)
-        grid.addWidget(btn5, 0, 2) # forward
-        grid.addWidget(btn6, 2, 2) # backward
-        grid.addWidget(btn7, 1, 1) # left
-        grid.addWidget(btn8, 1, 3) # right
-        grid.addWidget(btn9, 1, 2) # stop
-        grid.addWidget(btn10, 0, 4) # turn left
-        grid.addWidget(btn11, 1, 4) # turn right
-        grid.addWidget(btn12, 2, 4) # Face
-        grid.addWidget(btn13, 3, 4) # auto drive
+        grid.addWidget(btn5, 0, 2)
+        grid.addWidget(btn6, 2, 2) 
+        grid.addWidget(btn7, 1, 1) 
+        grid.addWidget(btn8, 1, 3) 
+        grid.addWidget(btn9, 1, 2) 
+        grid.addWidget(btn10, 0, 4) 
+        grid.addWidget(btn11, 1, 4)
+        grid.addWidget(btn12, 2, 4) 
+        grid.addWidget(btn13, 3, 4) 
 
         self.layout = QVBoxLayout(self)
         self.layout.addWidget(self.text_label)
@@ -173,11 +174,13 @@ class App(QWidget):
                 
                 if self.autodrive :
                     # img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                    car_state = "go"
+                    yolo_state = "go"
                     height, width, _ = img.shape
-                    img2 = img[height // 2:, :]
+                    frame = img[height // 2:, :]
                     lower_bound = np.array([0, 0, 0])
                     upper_bound = np.array([255, 255, 80])
-                    mask = cv2.inRange(img2, lower_bound, upper_bound)
+                    mask = cv2.inRange(frame, lower_bound, upper_bound)
                     M = cv2.moments(mask)
                     if M["m00"] != 0:
                         cX = int(M["m10"] / M["m00"])
@@ -185,21 +188,49 @@ class App(QWidget):
                     else:
                         cX, cY = 0, 0
                     center_offset = width // 2 - cX
-                    cv2.circle(img2, (cX, cY + height // 3), 10, (0, 255, 0), -1)
+                    cv2.circle(frame, (cX, cY + height // 3), 10, (0, 255, 0), -1)
                     # cv2.imshow("title", mask) 트랙킹 확인
 
                     if center_offset > 15:
-                        self.right()
+                        car_state = "right"
                     elif center_offset < -15:
-                        self.left()
+                        car_state = "left"
                     else:
-                        self.forward()
+                        car_state = "go"
+
+                    thread_frame = img
+                    results = self.model(thread_frame)
+                    detections = results.pandas().xyxy[0]
+
+                    if not detections.empty:  
+                        for _, detection in detections.iterrows():
+                            x1, y1, x2, y2 = detection[['xmin', 'ymin', 'xmax', 'ymax']].astype(int).values           
+                            label = detection['name']
+                            conf = detection['confidence']
+
+                            if "stop" in label and conf > 0.3:
+                                yolo_state = "stop"
+                            elif "slow" in label and conf > 0.3:
+                                request.urlopen('http://' + App.ip + "/action?go=speed40")
+                                yolo_state = "go"
+
+                            color = [0, 0, 0]
+                            cv2.rectangle(thread_frame, (x1, y1), (x2, y2), color, 2)
+                            cv2.putText(thread_frame, f'{label} {conf:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    
+                    if car_state == "go" and yolo_state =="go":
+                        request.urlopen('http://' + App.ip + "/action?go=forward")
+                    elif car_state == "right" and yolo_state =="go":
+                        request.urlopen('http://' + App.ip + "/action?go=right")
+                    elif car_state == "left" and yolo_state =="go":
+                        request.urlopen('http://' + App.ip + "/action?go=left")
+                    elif yolo_state =="stop":
+                        request.urlopen('http://' + App.ip + "/action?go=stop")
+                
+
 
                 if self.face_detection_enabled :
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    # scaleFactor : 이미지 크기를 얼마나 축소할지 결정
-                    # minNeighbor : 얼굴로 인식되기 위한 최소 이웃 사각형 수, 값이 클수록 검출되는 얼굴이 더 정확하다
-                    # minSize : 얼굴 탐지할 때 최소 크기
                     faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=7, minSize=(50, 50))
                     for (x, y, w, h) in faces :
                         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -208,12 +239,11 @@ class App(QWidget):
 
                 frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 
-                # OpenCV 이미지를 QImage로 변환
                 height, width, channels = frame.shape
                 bytes_per_line = 3 * width
                 q_img = QImage(frame.data, width, height, bytes_per_line, QImage.Format_RGB888)
                 
-                # QPixmap을 라벨에 표시
+
                 pixmap = QPixmap.fromImage(q_img)
                 self.label.setPixmap(pixmap)
 
@@ -224,7 +254,6 @@ class App(QWidget):
 
 
     def closeEvent(self, event) :
-        
         event.accept()
 
     def keyPressEvent(self, event:QKeyEvent) :
@@ -250,7 +279,6 @@ class App(QWidget):
 
         if key in [Qt.Key_W, Qt.Key_S, Qt.Key_A, Qt.Key_D] :
             self.stop()
-
 
 if __name__ == '__main__':
    print(sys.argv)
